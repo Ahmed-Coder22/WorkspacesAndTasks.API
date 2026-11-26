@@ -21,30 +21,35 @@ namespace TaskManagementAPI.Controllers
         [HttpPost("Register")]
         public async Task<IActionResult> Register(RegisterDTO registerDTO)
         {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
 
-            string result = await _work.Auth.RegisterAsync(registerDTO);
+            var result = await _work.Auth.RegisterAsync(registerDTO);
 
-            if (result != "Done")
-            {
-                return BadRequest(new ResponseAPI(400, result));
-            }
-            return StatusCode(201, new ResponseAPI(201, "Registration successful. Please check your email to activate your account."));
+            return StatusCode(
+                result.StatusCode,
+                new ResponseAPI(result.StatusCode, result.Message)
+            );
         }
+
         [EnableRateLimiting("IpRateLimit")]
         [HttpPost("Login")]
         public async Task<IActionResult> Login(LoginDTO loginDTO)
         {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
 
-            string result = await _work.Auth.LoginAsync(loginDTO);
+            var result = await _work.Auth.LoginAsync(loginDTO);
 
-            if (result.StartsWith("Please"))
+            if (!result.Success)
             {
-                return BadRequest(new ResponseAPI(400, result));
+                return StatusCode(
+                    result.StatusCode,
+                    new ResponseAPI(result.StatusCode, result.Message)
+                );
             }
 
-            Response.Cookies.Append("token", result, new CookieOptions
+            Response.Cookies.Append("token", result.Data!, new CookieOptions
             {
                 HttpOnly = true,
                 Secure = true,
@@ -52,45 +57,54 @@ namespace TaskManagementAPI.Controllers
                 IsEssential = true,
                 Expires = DateTimeOffset.UtcNow.AddDays(6)
             });
-            return Ok(new ResponseAPI(200, "Login successful."));
+
+            return Ok(new ResponseAPI(200, result.Message));
         }
+
+
 
         [HttpGet("Active-Account")]
         public async Task<IActionResult> ActiveAccount(
-    [FromQuery] string email,
-    [FromQuery] string code)
+            [FromQuery] string email,
+            [FromQuery] string code)
         {
-
             var accountDTO = new ActiveAccountDTO(email, code);
 
             var result = await _work.Auth.ActiveAccount(accountDTO);
 
-            return result
-                ? Ok(new ResponseAPI(200, "Email confirmed successfully"))
-                : BadRequest(new ResponseAPI(400, "Invalid confirmation link"));
+            return StatusCode(
+                result.StatusCode,
+                new ResponseAPI(result.StatusCode, result.Message)
+            );
         }
-        
+
         [EnableRateLimiting("IpRateLimit")]
         [HttpPost("send-email-forget-password")]
-        public async Task<IActionResult> ForgetPassword([FromBody] string email)
-        {
-            await _work.Auth.SendEmailForForgetPassword(email);
-
-            return Ok(new ResponseAPI(200, "If your email is registered, you will receive a password reset link shortly."));
-        }
-
-        [HttpPost("Reset-Password")]
-        public async Task<IActionResult> ResetPassword(RestPasswordDTO restPasswordDTO)
+        public async Task<IActionResult> ForgetPassword(
+            [FromBody] string email)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
-            var result = await _work.Auth.ResetPassword(restPasswordDTO);
-            if (result == "Done")
-            {
-                return Ok(new ResponseAPI(200, "Password reset successful."));
-            }
-            return BadRequest(new ResponseAPI(400,result));
+            var result = await _work.Auth.SendEmailForForgetPassword(
+                email
+            );
+
+            return Ok(new ResponseAPI(200, result.Message));
+        }
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword(
+            [FromBody] RestPasswordDTO resetPasswordDTO)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var result = await _work.Auth.ResetPassword(resetPasswordDTO);
+
+            return StatusCode(
+                result.StatusCode,
+                new ResponseAPI(result.StatusCode, result.Message)
+            );
         }
 
         [HttpPost("Logout")]

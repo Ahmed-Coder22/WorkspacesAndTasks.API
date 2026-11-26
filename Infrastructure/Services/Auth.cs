@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -27,41 +28,87 @@ namespace Infrastructure.Repositories
             this.context = context;
         }
 
-        public async Task<string> RegisterAsync(RegisterDTO registerDTO)
+        public async Task<ServiceResponse<bool>> RegisterAsync(RegisterDTO registerDTO)
         {
-            if (registerDTO == null)
+            if (registerDTO is null)
             {
-                return null;
-            }
-            if (await userManager.FindByNameAsync(registerDTO.UserName) is not null)
-            {
-                return "this UserName is already registerd";
-            }
-            if (await userManager.FindByEmailAsync(registerDTO.Email) is not null)
-            {
-                return "this email is already registerd";
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "Invalid registration data.",
+                    StatusCode = 400
+                };
             }
 
+            // Check Username
+            var existingUser = await userManager.FindByNameAsync(registerDTO.UserName);
+
+            if (existingUser is not null)
+            {
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "This username is already registered.",
+                    StatusCode = 409
+                };
+            }
+
+            // Check Email
+            var existingEmail = await userManager.FindByEmailAsync(registerDTO.Email);
+
+            if (existingEmail is not null)
+            {
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "This email is already registered.",
+                    StatusCode = 409
+                };
+            }
+
+            // Create User
             AppUser user = new()
             {
-                Email = registerDTO.Email,
                 UserName = registerDTO.UserName,
-                FullName = registerDTO.FullName,
+                Email = registerDTO.Email,
+                FullName = registerDTO.FullName
             };
 
             var result = await userManager.CreateAsync(user, registerDTO.Password);
-            if (result.Succeeded is not true)
-            {
-                return result.Errors.ToList()[0].Description;
-            }
-            // Send Active Email
-            string confirmationBaseUrl =
-            "https://localhost:7175/api/Auth/active-account";
-            string token = await userManager.GenerateEmailConfirmationTokenAsync(user);
-            await SendEmail(user.Email, token, confirmationBaseUrl, "ActiveEmail", "Please active your email, click on button to active");
-            return "Done";
-        }
 
+            if (!result.Succeeded)
+            {
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = string.Join(" | ", result.Errors.Select(e => e.Description)),
+                    StatusCode = 400
+                };
+            }
+
+            // Generate Confirmation Token
+            var token = await userManager.GenerateEmailConfirmationTokenAsync(user);
+
+            // Send Confirmation Email
+            string confirmationBaseUrl = "https://workspacesandtasks.runasp.net/api/Auth/active-account";
+
+
+            await SendEmail(
+                user.Email!,
+                token,
+                confirmationBaseUrl,
+                "ActiveEmail",
+                "Please activate your email by clicking the button below."
+            );
+
+            return new ServiceResponse<bool>
+            {
+                Success = true,
+                Message = "Registration successful. Please check your email to activate your account.",
+                Data = true,
+                StatusCode = 201
+            };
+        }
 
         public async Task SendEmail(string email, string code, string component, string subject, string message)
         {
@@ -72,86 +119,229 @@ namespace Infrastructure.Repositories
             await emailService.SendEmailAsync(result);
         }
 
-        public async Task<string> LoginAsync(LoginDTO login)
+        public async Task<ServiceResponse<string>> LoginAsync(LoginDTO login)
         {
-            if (login == null)
+            if (login is null)
             {
-                return null;
-            }
-            var finduser = await userManager.FindByEmailAsync(login.Email);
-
-            if (!finduser.EmailConfirmed)
-            {
-                string confirmationBaseUrl =
-                "https://localhost:7175/api/Auth/active-account";
-
-                string token = await userManager.GenerateEmailConfirmationTokenAsync(finduser);
-
-                await SendEmail(finduser.Email, token, confirmationBaseUrl, "ActiveEmail", "Please active your email, click on button to active");
-
-                return "Please confirem your email first, we have send activat to your E-mail";
+                return new ServiceResponse<string>
+                {
+                    Success = false,
+                    Message = "Invalid login data.",
+                    StatusCode = 400
+                };
             }
 
-            var result = await signInManager.CheckPasswordSignInAsync(finduser, login.Password, true);
+            var user = await userManager.FindByEmailAsync(login.Email);
 
-            if (result.Succeeded)
+            if (user is null)
             {
-                return generateToken.GetAndCreateToken(finduser);
+                return new ServiceResponse<string>
+                {
+                    Success = false,
+                    Message = "Invalid email or password.",
+                    StatusCode = 401
+                };
             }
 
-            return "Please check your email and password, something went wrong";
+            if (!user.EmailConfirmed)
+            {
+                return new ServiceResponse<string>
+                {
+                    Success = false,
+                    Message = "Please confirm your email before logging in.",
+                    StatusCode = 403
+                };
+            }
+
+            var result = await signInManager.CheckPasswordSignInAsync(
+                user,
+                login.Password,
+                lockoutOnFailure: true
+            );
+
+            if (result.IsLockedOut)
+            {
+                return new ServiceResponse<string>
+                {
+                    Success = false,
+                    Message = "Your account is temporarily locked. Please try again later.",
+                    StatusCode = 423
+                };
+            }
+
+            if (!result.Succeeded)
+            {
+                return new ServiceResponse<string>
+                {
+                    Success = false,
+                    Message = "Invalid email or password.",
+                    StatusCode = 401
+                };
+            }
+
+            var token = generateToken.GetAndCreateToken(user);
+
+            return new ServiceResponse<string>
+            {
+                Success = true,
+                Message = "Login successful.",
+                Data = token,
+                StatusCode = 200
+            };
         }
-
-        public async Task<bool> SendEmailForForgetPassword(string email)
+        public async Task<ServiceResponse<bool>> SendEmailForForgetPassword(string email)
         {
-            var findUser = await userManager.FindByEmailAsync(email);
-            if (findUser is null)
+            if (string.IsNullOrWhiteSpace(email))
             {
-                return false;
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "Email is required.",
+                    StatusCode = 400
+                };
             }
-            var token = await userManager.GeneratePasswordResetTokenAsync(findUser);
-            await SendEmail(findUser.Email, token, "Reset-Password", "Rest pssword", "click on button to Reset your password");
 
-            return true;
+            var user = await userManager.FindByEmailAsync(email);
 
+            // Don't reveal whether the email exists.
+            if (user is null)
+            {
+                return new ServiceResponse<bool>
+                {
+                    Success = true,
+                    Message = "If your email is registered, you will receive a password reset link shortly.",
+                    Data = true,
+                    StatusCode = 200
+                };
+            }
+
+            var token = await userManager.GeneratePasswordResetTokenAsync(user);
+
+
+            string resetPasswordBaseUrl =
+           "https://workspacesandtasks.runasp.net/api/Auth/reset-password";
+
+            await SendEmail(
+                user.Email!,
+                token,
+                resetPasswordBaseUrl,
+                "Reset Password",
+                "Click the button below to reset your password."
+            );
+
+            return new ServiceResponse<bool>
+            {
+                Success = true,
+                Message = "If your email is registered, you will receive a password reset link shortly.",
+                Data = true,
+                StatusCode = 200
+            };
         }
-
-        public async Task<string> ResetPassword(RestPasswordDTO restPassword)
+        public async Task<ServiceResponse<bool>> ResetPassword(RestPasswordDTO resetPassword)
         {
-            var findUser = await userManager.FindByEmailAsync(restPassword.Email);
-            if (findUser is null)
+            if (resetPassword is null)
             {
-                return null;
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "Invalid reset password data.",
+                    StatusCode = 400
+                };
             }
 
-            var result = await userManager.ResetPasswordAsync(findUser, restPassword.Token, restPassword.Password);
+            var user = await userManager.FindByEmailAsync(resetPassword.Email);
 
-            if (result.Succeeded)
+            if (user is null)
             {
-                return "Done";
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "Invalid password reset request.",
+                    StatusCode = 400
+                };
             }
-            return result.Errors.ToList()[0].Description;
+
+            var result = await userManager.ResetPasswordAsync(
+                user,
+                resetPassword.Token,
+                resetPassword.Password
+            );
+
+            if (!result.Succeeded)
+            {
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = string.Join(" | ", result.Errors.Select(e => e.Description)),
+                    StatusCode = 400
+                };
+            }
+
+            return new ServiceResponse<bool>
+            {
+                Success = true,
+                Message = "Password reset successful.",
+                Data = true,
+                StatusCode = 200
+            };
         }
-        public async Task<bool> ActiveAccount(ActiveAccountDTO accountDTO)
+        public async Task<ServiceResponse<bool>> ActiveAccount(ActiveAccountDTO accountDTO)
         {
-            var findUser = await userManager.FindByEmailAsync(accountDTO.Email);
-
-            if (findUser is null)
+            if (accountDTO is null)
             {
-                return false;
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "Invalid confirmation data.",
+                    StatusCode = 400
+                };
             }
 
-            if (findUser.EmailConfirmed)
+            var user = await userManager.FindByEmailAsync(accountDTO.Email);
+
+            if (user is null)
             {
-                return true;
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "Invalid confirmation link.",
+                    StatusCode = 400
+                };
+            }
+
+            if (user.EmailConfirmed)
+            {
+                return new ServiceResponse<bool>
+                {
+                    Success = true,
+                    Message = "Email is already confirmed.",
+                    Data = true,
+                    StatusCode = 200
+                };
             }
 
             var result = await userManager.ConfirmEmailAsync(
-                findUser,
+                user,
                 accountDTO.Token
             );
 
-            return result.Succeeded;
+            if (!result.Succeeded)
+            {
+                return new ServiceResponse<bool>
+                {
+                    Success = false,
+                    Message = "Invalid or expired confirmation link.",
+                    StatusCode = 400
+                };
+            }
+
+            return new ServiceResponse<bool>
+            {
+                Success = true,
+                Message = "Email confirmed successfully.",
+                Data = true,
+                StatusCode = 200
+            };
         }
     }
 }

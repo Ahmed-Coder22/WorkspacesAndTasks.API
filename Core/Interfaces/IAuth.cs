@@ -1,4 +1,5 @@
 ﻿using Core.DTO;
+using Core.Sharing;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,11 +10,11 @@ namespace Core.Interfaces
 {
     public interface IAuth
     {
-        Task<string> RegisterAsync(RegisterDTO registerDTO);
-        Task<string> LoginAsync(LoginDTO login);
-        Task<bool> SendEmailForForgetPassword(string email);
-        Task<string> ResetPassword(RestPasswordDTO restPassword);
-        Task<bool> ActiveAccount(ActiveAccountDTO accountDTO);
+        Task<ServiceResponse<bool>> RegisterAsync(RegisterDTO registerDTO);
+        Task<ServiceResponse<string>> LoginAsync(LoginDTO login);
+        Task<ServiceResponse<bool>> SendEmailForForgetPassword(string email);
+        Task<ServiceResponse<bool>> ResetPassword(RestPasswordDTO restPassword);
+        Task<ServiceResponse<bool>> ActiveAccount(ActiveAccountDTO accountDTO);
 
     }
 }

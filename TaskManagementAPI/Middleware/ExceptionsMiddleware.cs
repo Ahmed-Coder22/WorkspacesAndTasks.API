@@ -30,7 +30,7 @@ namespace TaskManagementAPI.Middleware
 
                 var response = _environment.IsDevelopment() ?
                      new ApiExceptions((int)HttpStatusCode.InternalServerError, ex.Message, ex.StackTrace)
-                    : new ApiExceptions((int)HttpStatusCode.InternalServerError, "An unexpected error occurred.");
+                    : new ApiExceptions((int)HttpStatusCode.InternalServerError, ex.Message,ex.StackTrace);
 
                 var json = JsonSerializer.Serialize(response);
                 await context.Response.WriteAsync(json);
